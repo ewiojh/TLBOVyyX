@@ -472,13 +472,19 @@ optionsFrame.ZIndex = 615
 optionsFrame.Parent = espPage 
 round(optionsFrame, 8)
 
+local optStroke = Instance.new("UIStroke")
+optStroke.Color = Color3.fromRGB(200, 200, 200)
+optStroke.Parent = optionsFrame
+
 local optLayout = Instance.new("UIListLayout")
 optLayout.Padding = UDim.new(0, 2)
+optLayout.SortOrder = Enum.SortOrder.LayoutOrder
 optLayout.Parent = optionsFrame
 
 for i, modeName in ipairs(modes) do
     local opt = Instance.new("TextButton")
     opt.Size = UDim2.new(1, 0, 0, 36)
+    opt.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     opt.BackgroundTransparency = 1
     opt.Text = modeName
     opt.Font = Enum.Font.GothamBold
@@ -487,10 +493,16 @@ for i, modeName in ipairs(modes) do
     opt.LayoutOrder = i
     opt.ZIndex = 616
     opt.Parent = optionsFrame
+
     opt.MouseButton1Click:Connect(function()
         tracerMode = i
         dropdownBtn.Text = "模式: " .. modeName
         optionsFrame.Visible = false 
+        if tracerEnabled then
+            for _, line in pairs(tracerLines) do 
+                if hasDrawing then line.Visible = false else line.Visible = false end
+            end
+        end
     end)
 end
 
@@ -575,12 +587,12 @@ local function updateTracers()
     end
 
     for i = activeLines + 1, #tracerLines do
-        tracerLines[i].Visible = false
+        if hasDrawing then tracerLines[i].Visible = false else tracerLines[i].Visible = false end
     end
 end
 
 ----------------------------------------------------------------
--- 极简真·2D骨骼透视 (带圆圈)
+-- 2D 骨骼透视
 ----------------------------------------------------------------
 local skeletonEnabled = false
 local skeletonLines = {}
@@ -1204,7 +1216,32 @@ end)----------------------------------------------------------------
         end
     end).LayoutOrder = 5
 
-    -- 4. 本地隐身
+    -- 4. 防布娃娃 (Anti-Ragdoll)
+    local antiRagdollEnabled = false
+    local antiRagdollConn = nil
+
+    addToggle(mainPage, "防布娃娃 (防撞墙倒地)", false, function(state)
+        antiRagdollEnabled = state
+        if antiRagdollConn then antiRagdollConn:Disconnect(); antiRagdollConn = nil end
+        
+        if state then
+            antiRagdollConn = RunService.Heartbeat:Connect(function()
+                local char = player.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.Health <= 0 then return end
+                
+                if hum:GetState() == Enum.HumanoidStateType.Physics 
+                or hum:GetState() == Enum.HumanoidStateType.FallingDown 
+                or hum:GetState() == Enum.HumanoidStateType.Ragdoll then
+                    hum:ChangeState(Enum.HumanoidStateType.Running)
+                    if hum.PlatformStand then hum.PlatformStand = false end
+                end
+            end)
+        end
+    end).LayoutOrder = 6
+
+    -- 5. 本地隐身
     local invisibleEnabled = false
     local invisibleConn = nil
     addToggle(mainPage, "本地人物隐身", false, function(state)
@@ -1230,9 +1267,9 @@ end)----------------------------------------------------------------
                 end
             end
         end
-    end).LayoutOrder = 6
+    end).LayoutOrder = 7
 
-    -- 5. 全局夜视
+    -- 6. 全局夜视
     local fullbrightEnabled = false
     local savedBrightness = Lighting.Brightness
     local savedAmbient = Lighting.Ambient
@@ -1245,9 +1282,9 @@ end)----------------------------------------------------------------
             Lighting.Brightness = savedBrightness
             Lighting.Ambient = savedAmbient
         end
-    end).LayoutOrder = 7
+    end).LayoutOrder = 8
 
-    -- 6. 重力控制
+    -- 7. 重力控制
     local gravityConn = nil
     local currentGravity = 196.2
     local gravityToggle = addToggle(mainPage, "修改重力", false, function(state)
@@ -1264,7 +1301,7 @@ end)----------------------------------------------------------------
             workspace.Gravity = 196.2
         end
     end)
-    if gravityToggle then gravityToggle.LayoutOrder = 8 end
+    if gravityToggle then gravityToggle.LayoutOrder = 9 end
 
     addSlider(mainPage, "重力大小", 10, 300, 196, function(val)
         currentGravity = val
@@ -1274,9 +1311,225 @@ end)----------------------------------------------------------------
     end)
 
     ----------------------------------------------------------------
+    -- 视觉设置页扩展：背身、陀螺旋转、甩飞
+    ----------------------------------------------------------------
+    local moonwalkEnabled = false
+    local moonwalkConn = nil
+    addToggle(visualPage, "背身行走 (太空步)", false, function(state)
+        moonwalkEnabled = state
+        if moonwalkConn then moonwalkConn:Disconnect(); moonwalkConn = nil end
+        
+        local char = player.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.AutoRotate = not state end
+        end
+
+        if state then
+            moonwalkConn = RunService.RenderStepped:Connect(function()
+                local char = player.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not hum or not root then return end
+                hum.AutoRotate = false
+                local camCF = workspace.CurrentCamera.CFrame
+                local flatCamLook = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z).Unit
+                local targetCFrame = CFrame.lookAt(root.Position, root.Position + flatCamLook)
+                root.CFrame = root.CFrame:Lerp(targetCFrame, 0.4)
+            end)
+        else
+            if player.Character then
+                local hum = player.Character:FindFirstChildOfClass("Humanoid")
+                if hum then hum.AutoRotate = true end
+            end
+        end
+    end).LayoutOrder = 20
+
+    local spinbotEnabled = false
+    local spinbotSpeed = 500
+    local spinbotConn = nil
+    local currentSpinAngle = 0
+
+    local spinInputFrame = Instance.new("Frame")
+    spinInputFrame.Size = UDim2.new(1, 0, 0, 40)
+    spinInputFrame.BackgroundTransparency = 1
+    spinInputFrame.Parent = visualPage
+
+    local spinInputLabel = Instance.new("TextLabel")
+    spinInputLabel.Size = UDim2.new(0.5, 0, 1, 0)
+    spinInputLabel.BackgroundTransparency = 1
+    spinInputLabel.Font = Enum.Font.GothamBold
+    spinInputLabel.Text = "旋转速度 (无上限)"
+    spinInputLabel.TextSize = 14
+    spinInputLabel.TextColor3 = Color3.fromRGB(50, 50, 50)
+    spinInputLabel.TextXAlignment = Enum.TextXAlignment.Left
+    spinInputLabel.Parent = spinInputFrame
+
+    local spinBox = Instance.new("TextBox")
+    spinBox.AnchorPoint = Vector2.new(1, 0.5)
+    spinBox.Position = UDim2.new(1, 0, 0.5, 0)
+    spinBox.Size = UDim2.new(0.5, 0, 0, 30)
+    spinBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    spinBox.BackgroundTransparency = 0.3
+    spinBox.Font = Enum.Font.GothamBold
+    spinBox.Text = tostring(spinbotSpeed)
+    spinBox.TextSize = 14
+    spinBox.TextColor3 = Color3.fromRGB(50, 50, 50)
+    spinBox.Parent = spinInputFrame
+    round(spinBox, 8)
+    
+    local spinBoxStroke = Instance.new("UIStroke")
+    spinBoxStroke.Color = Color3.fromRGB(200, 200, 200)
+    spinBoxStroke.Transparency = 0.3
+    spinBoxStroke.Parent = spinBox
+
+    spinBox.FocusLost:Connect(function()
+        local num = tonumber(spinBox.Text)
+        if num then spinbotSpeed = num; spinBox.Text = tostring(spinbotSpeed) else spinBox.Text = tostring(spinbotSpeed) end
+    end)
+
+    addToggle(visualPage, "开启陀螺旋转 (Spinbot)", false, function(state)
+        spinbotEnabled = state
+        if spinbotConn then spinbotConn:Disconnect(); spinbotConn = nil end
+        
+        local char = player.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.AutoRotate = not state end
+        end
+
+        if state then
+            spinbotConn = RunService.RenderStepped:Connect(function(dt)
+                local char = player.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not hum or not root then return end
+                hum.AutoRotate = false
+                currentSpinAngle = (currentSpinAngle + (spinbotSpeed * dt)) % 360
+                local targetCFrame = CFrame.new(root.Position) * CFrame.Angles(0, math.rad(currentSpinAngle), 0)
+                root.CFrame = targetCFrame
+            end)
+        else
+            if player.Character then
+                local hum = player.Character:FindFirstChildOfClass("Humanoid")
+                if hum then hum.AutoRotate = true end
+            end
+        end
+    end).LayoutOrder = 21
+
+    -- 开源库现代版物理甩飞
+    local flingTargetName = "All"
+    local isFlinging = false
+
+    local flingInputFrame = Instance.new("Frame")
+    flingInputFrame.Size = UDim2.new(1, 0, 0, 40)
+    flingInputFrame.BackgroundTransparency = 1
+    flingInputFrame.Parent = visualPage
+
+    local flingInputLabel = Instance.new("TextLabel")
+    flingInputLabel.Size = UDim2.new(0.5, 0, 1, 0)
+    flingInputLabel.BackgroundTransparency = 1
+    flingInputLabel.Font = Enum.Font.GothamBold
+    flingInputLabel.Text = "甩飞目标 (填 All)"
+    flingInputLabel.TextSize = 14
+    flingInputLabel.TextColor3 = Color3.fromRGB(50, 50, 50)
+    flingInputLabel.TextXAlignment = Enum.TextXAlignment.Left
+    flingInputLabel.Parent = flingInputFrame
+
+    local flingBox = Instance.new("TextBox")
+    flingBox.AnchorPoint = Vector2.new(1, 0.5)
+    flingBox.Position = UDim2.new(1, 0, 0.5, 0)
+    flingBox.Size = UDim2.new(0.5, 0, 0, 30)
+    flingBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    flingBox.BackgroundTransparency = 0.3
+    flingBox.Font = Enum.Font.GothamBold
+    flingBox.Text = flingTargetName
+    flingBox.TextSize = 14
+    flingBox.TextColor3 = Color3.fromRGB(50, 50, 50)
+    flingBox.Parent = flingInputFrame
+    round(flingBox, 8)
+    
+    local flingBoxStroke = Instance.new("UIStroke")
+    flingBoxStroke.Color = Color3.fromRGB(200, 200, 200)
+    flingBoxStroke.Transparency = 0.3
+    flingBoxStroke.Parent = flingBox
+
+    flingBox.FocusLost:Connect(function()
+        if flingBox.Text ~= "" then flingTargetName = flingBox.Text else flingBox.Text = flingTargetName end
+    end)
+
+    local function ModernFling(target)
+        local char = player.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+
+        local tChar = target.Character
+        if not tChar then return end
+        local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+        local tHum = tChar:FindFirstChildOfClass("Humanoid")
+        if not tRoot or not tHum then return end
+
+        if (tRoot.Position - root.Position).Magnitude > 150 then return end
+
+        tHum:ChangeState(Enum.HumanoidStateType.Ragdoll)
+        tHum.PlatformStand = true
+
+        local bv = Instance.new("BodyAngularVelocity")
+        bv.Parent = root
+        bv.AngularVelocity = Vector3.new(9e7, 9e7, 9e7)
+        bv.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+
+        local bvLin = Instance.new("BodyVelocity")
+        bvLin.Parent = root
+        bvLin.Velocity = Vector3.new(9e8, 9e8, 9e8)
+        bvLin.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+
+        local bvT = Instance.new("BodyPosition")
+        bvT.Parent = tRoot
+        bvT.Position = root.Position
+        bvT.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+
+        task.spawn(function()
+            local startTime = tick()
+            while tick() - startTime < 0.5 do
+                if not root or not tRoot or not tRoot.Parent then break end
+                root.AssemblyLinearVelocity = Vector3.new(9e8, 9e8, 9e8)
+                root.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+                tRoot.CFrame = root.CFrame
+                task.wait()
+            end
+            bv:Destroy(); bvLin:Destroy(); bvT:Destroy()
+            if hum then hum:ChangeState(Enum.HumanoidStateType.Running) end
+        end)
+    end
+
+    addToggle(visualPage, "物理甩飞 (开源现代版)", false, function(state)
+        isFlinging = state
+        if state then
+            task.spawn(function()
+                while isFlinging do
+                    for _, plr in ipairs(Players:GetPlayers()) do
+                        if plr ~= player and plr.Character then
+                            if flingTargetName:lower() == "all" then
+                                ModernFling(plr)
+                            elseif plr.Name:lower():match("^" .. flingTargetName:lower()) then
+                                ModernFling(plr)
+                            end
+                        end
+                    end
+                    task.wait(1)
+                end
+            end)
+        end
+    end).LayoutOrder = 22
+
+    ----------------------------------------------------------------
     -- 自制虚拟摇杆与跳跃
     ----------------------------------------------------------------
-    local customControlEnabled = false
     local customGui = Instance.new("ScreenGui")
     customGui.Name = "CustomMobileControls"
     customGui.ResetOnSpawn = false
@@ -1359,7 +1612,6 @@ end)----------------------------------------------------------------
     end)
 
     addToggle(mainPage, "开启自制摇杆/跳跃", false, function(state)
-        customControlEnabled = state
         joystickBase.Visible = state
         jumpBtn.Visible = state
         
@@ -1370,14 +1622,14 @@ end)----------------------------------------------------------------
                 controlFrame.Visible = not state
             end
         end
-    end).LayoutOrder = 9
+    end).LayoutOrder = 10
 
     ----------------------------------------------------------------
     -- 快捷切枪栏 (1-10)
     ----------------------------------------------------------------
     local weaponBarFrame = Instance.new("Frame")
     weaponBarFrame.AnchorPoint = Vector2.new(0.5, 0)
-    weaponBarFrame.Position = UDim2.new(0.5, 0, 0, 70)
+    weaponBarFrame.Position = UDim2.new(0.5, 0, 0, 120)
     weaponBarFrame.Size = UDim2.fromOffset(420, 40)
     weaponBarFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     weaponBarFrame.BackgroundTransparency = 0.5
@@ -1440,7 +1692,7 @@ end)----------------------------------------------------------------
 
     addToggle(mainPage, "开启快捷切枪栏", false, function(state)
         weaponBarFrame.Visible = state
-    end).LayoutOrder = 10
+    end).LayoutOrder = 11
 
     ----------------------------------------------------------------
     -- 面板交互与收尾逻辑
@@ -1469,12 +1721,15 @@ end)----------------------------------------------------------------
         if invisibleConn then invisibleConn:Disconnect(); invisibleConn = nil end
         if gravityConn then gravityConn:Disconnect(); gravityConn = nil end
         if antiFlingConn then antiFlingConn:Disconnect(); antiFlingConn = nil end
+        if antiRagdollConn then antiRagdollConn:Disconnect(); antiRagdollConn = nil end
+        if moonwalkConn then moonwalkConn:Disconnect(); moonwalkConn = nil end
+        if spinbotConn then spinbotConn:Disconnect(); spinbotConn = nil end
         
         if flyConn then flyConn:Disconnect(); flyConn = nil end
         local char = player.Character
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then hum.PlatformStand = false; hum.WalkSpeed = 16 end
+            if hum then hum.PlatformStand = false; hum.WalkSpeed = 16; hum.AutoRotate = true end
             char.Animate.Disabled = false
             local root = char:FindFirstChild("HumanoidRootPart")
             if root then
